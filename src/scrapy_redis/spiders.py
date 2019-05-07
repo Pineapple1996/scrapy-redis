@@ -1,10 +1,11 @@
-from scrapy import signals
+import json
+
+from scrapy import signals,Request,FormRequest
 from scrapy.exceptions import DontCloseSpider
 from scrapy.spiders import Spider, CrawlSpider
 
 from . import connection, defaults
 from .utils import bytes_to_str
-
 
 class RedisMixin(object):
     """Mixin class to implement reading urls from a redis queue."""
@@ -106,8 +107,44 @@ class RedisMixin(object):
             Message from redis.
 
         """
-        url = bytes_to_str(data, self.redis_encoding)
-        return self.make_requests_from_url(url)
+        data = bytes_to_str(data, self.redis_encoding)
+        # return self.make_requests_from_url(url)
+        try:
+            js_data = json.loads(data)
+        except json.JSONDecodeError:
+            raise json.JSONDecodeError
+        try:
+            url = js_data['url']
+            method = js_data['method']
+        except KeyError:
+            raise KeyError('Redis data must have url,method')
+
+        headers = js_data['headers'] if 'headers' in data else {}
+        cookies = js_data['cookies'] if 'cookies' in data else None
+        post_data = js_data['data'] if 'data' in data else None
+        body = js_data['body'] if 'body' in data else None
+        meta = js_data['meta'] if 'meta' in data else None
+        if method in ['GET','POST_JSON']:
+            if method == 'POST_JSON':
+                headers.setdefault('Content-Type', 'application/json;charset=utf-8')
+            return Request(
+                url=url,
+                headers=headers,
+                cookies=cookies,
+                method=method,
+                meta=meta,
+                body=body,
+                dont_filter=True
+            )
+        elif method in ['POST']:
+            return FormRequest(
+                        url=url,
+                        headers=headers,
+                        cookies=cookies,
+                        meta=meta,
+                        formdata = post_data,
+                        dont_filter=True
+                    )
 
     def schedule_next_requests(self):
         """Schedules a request if available"""
